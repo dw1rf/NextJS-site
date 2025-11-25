@@ -35,6 +35,12 @@ export const env = createEnv({
     // используем подпись Token по паролю терминала:
     TINKOFF_TERMINAL_KEY: z.string().optional(),
     TINKOFF_TERMINAL_PASSWORD: z.string().optional(),
+    TINKOFF_API_BASE: z.string().url().optional(),
+    TINKOFF_PAYMENT_RECIPIENT_ID: z.string().optional(),
+    TINKOFF_DEAL_ID: z.string().optional(),
+    TINKOFF_CREATE_DEAL_TYPE: z.string().optional(),
+    TINKOFF_LEVEL_OF_CONFIDENCE: z.enum(["low", "moderate", "high"]).optional(),
+    TINKOFF_SEND_URLS: z.enum(["true", "false"]).optional(),
 
     // оставим для совместимости (не обязательно)
     TINKOFF_API_TOKEN: z.string().optional(),
@@ -74,6 +80,12 @@ export const env = createEnv({
     // Платежи
     TINKOFF_TERMINAL_KEY: process.env.TINKOFF_TERMINAL_KEY,
     TINKOFF_TERMINAL_PASSWORD: process.env.TINKOFF_TERMINAL_PASSWORD,
+    TINKOFF_API_BASE: process.env.TINKOFF_API_BASE,
+    TINKOFF_PAYMENT_RECIPIENT_ID: process.env.TINKOFF_PAYMENT_RECIPIENT_ID,
+    TINKOFF_DEAL_ID: process.env.TINKOFF_DEAL_ID,
+    TINKOFF_CREATE_DEAL_TYPE: process.env.TINKOFF_CREATE_DEAL_TYPE,
+    TINKOFF_LEVEL_OF_CONFIDENCE: process.env.TINKOFF_LEVEL_OF_CONFIDENCE,
+    TINKOFF_SEND_URLS: process.env.TINKOFF_SEND_URLS,
     TINKOFF_API_TOKEN: process.env.TINKOFF_API_TOKEN, // можно не задавать
     PAYMENTS_SUCCESS_URL: process.env.PAYMENTS_SUCCESS_URL,
     PAYMENTS_FAIL_URL: process.env.PAYMENTS_FAIL_URL,

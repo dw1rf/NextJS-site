@@ -2,6 +2,37 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { env } from "~/server/env";
 
+const PROD_API_BASE = "https://acqapi.tinkoff.ru";
+const TEST_API_BASE = "https://acqapi-test.tinkoff.ru";
+
+function resolveApiBase() {
+  const base = (env.TINKOFF_API_BASE ?? "").trim();
+  if (base) return base.replace(/\/$/, "");
+  const fallback = process.env.NODE_ENV === "production" ? PROD_API_BASE : TEST_API_BASE;
+  return fallback;
+}
+
+function normalizePhone(input: string | null | undefined) {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 11 && digits.startsWith("8")) {
+    return `+7${digits.slice(1)}`;
+  }
+  if (digits.startsWith("7") && digits.length === 11) {
+    return `+${digits}`;
+  }
+  return digits.startsWith("+") ? digits : `+${digits}`;
+}
+
+function normalizeRecipientId(input: string | null | undefined) {
+  const phone = normalizePhone(input);
+  if (!phone) return null;
+  return /^\+\d{10,15}$/.test(phone) ? phone : null;
+}
+
 /**
  * SHA-256 подпись по Password-методу T-Bank.
  * Берём ВСЕ поля тела (кроме Token) + Password, сортируем ключи, конкатенируем значения.
@@ -42,6 +73,18 @@ type TinkoffInitBody = {
   FailURL?: string;
   NotificationURL?: string;
   DATA?: Record<string, unknown>;
+  PaymentRecipientId?: string;
+  DealId?: string;
+  CreateDealWithType?: string;
+  LevelOfConfidence?: "low" | "moderate" | "high";
+};
+
+type InitRequestPayload = {
+  orderId: string;
+  amountKopeks: number;
+  description?: string;
+  contactEmail?: string;
+  contactPhone?: string;
 };
 
 export async function POST(req: Request) {
@@ -58,15 +101,37 @@ export async function POST(req: Request) {
       );
     }
 
-    const { orderId, amountKopeks, description } = (await req.json()) as {
-      orderId: string;
-      amountKopeks: number;
-      description?: string;
-    };
+    const {
+      orderId,
+      amountKopeks,
+      description,
+      contactEmail,
+      contactPhone,
+    } = (await req.json()) as InitRequestPayload;
 
     if (!orderId || !Number.isFinite(amountKopeks) || amountKopeks < 1) {
       return NextResponse.json({ ok: false, error: "Bad input" }, { status: 400 });
     }
+
+    const paymentRecipientId = normalizeRecipientId(env.TINKOFF_PAYMENT_RECIPIENT_ID ?? "");
+    if (!paymentRecipientId) {
+      return NextResponse.json(
+        { ok: false, error: "PaymentRecipientId is required on server env" },
+        { status: 500 },
+      );
+    }
+
+    const dealId = (env.TINKOFF_DEAL_ID ?? "").toString().trim() || undefined;
+    const createDealWithType = dealId ? undefined : (env.TINKOFF_CREATE_DEAL_TYPE ?? "").trim() || undefined;
+
+    const levelRaw = (env.TINKOFF_LEVEL_OF_CONFIDENCE ?? "").trim().toLowerCase();
+    let levelOfConfidence: "low" | "moderate" | "high" | undefined;
+    if (levelRaw === "low" || levelRaw === "moderate" || levelRaw === "high") {
+      levelOfConfidence = levelRaw;
+    }
+
+    const contactEmailClean = (contactEmail ?? "").trim() || undefined;
+    const contactPhoneClean = normalizePhone(contactPhone ?? "");
 
     // Уникализируем OrderId, чтобы не ловить «Заказ уже существует»
     const attempt = shortAttemptId();
@@ -81,12 +146,21 @@ export async function POST(req: Request) {
       Description: (description ?? "Оплата заказа").slice(0, 140),
     };
 
+    bodyBase.PaymentRecipientId = paymentRecipientId;
+    if (dealId) bodyBase.DealId = dealId;
+    if (!dealId && createDealWithType) bodyBase.CreateDealWithType = createDealWithType;
+    if (levelOfConfidence) bodyBase.LevelOfConfidence = levelOfConfidence;
+
+    const dataPayload: Record<string, string> = {};
+    if (contactEmailClean) dataPayload.Email = contactEmailClean;
+    if (contactPhoneClean) dataPayload.Phone = contactPhoneClean;
+
     /**
      * УДОБСТВА (включаются флагом).
      * В проде можно включить переменной:
      *   TINKOFF_SEND_URLS="true"
      */
-    const sendUrls = String(process.env.TINKOFF_SEND_URLS ?? "").toLowerCase() === "true";
+    const sendUrls = (env.TINKOFF_SEND_URLS ?? "").toLowerCase() === "true";
 
     if (sendUrls) {
       const base =
@@ -101,14 +175,19 @@ export async function POST(req: Request) {
       if (successUrl) bodyBase.SuccessURL = successUrl;
       if (failUrl) bodyBase.FailURL = failUrl;
       if (notificationUrl) bodyBase.NotificationURL = notificationUrl;
-      bodyBase.DATA = { baseOrderId: orderId };
+      bodyBase.DATA = { ...(bodyBase.DATA ?? {}), baseOrderId: orderId };
+    }
+
+    if (Object.keys(dataPayload).length > 0) {
+      bodyBase.DATA = { ...(bodyBase.DATA ?? {}), ...dataPayload };
     }
 
     // Подписываем ровно то, что отправим
     const Token = makeTinkoffToken(bodyBase, terminalPassword);
     const body = { ...bodyBase, Token };
 
-    const resp = await fetch("https://securepay.tinkoff.ru/v2/Init", {
+    const apiBase = resolveApiBase();
+    const resp = await fetch(`${apiBase}/v2/Init`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -125,6 +204,7 @@ export async function POST(req: Request) {
       const d = (data ?? {}) as Record<string, unknown>;
       console.error("[tinkoff Init] fail:", {
         httpStatus: resp.status,
+        apiBase,
         message: d?.Message,
         details: d?.Details,
         errorCode: d?.ErrorCode,

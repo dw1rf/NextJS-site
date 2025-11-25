@@ -11,6 +11,26 @@ type StartPaymentFail = { ok: false; error: string };
 export type StartPaymentResult = StartPaymentOk | StartPaymentFail;
 
 const P1017 = "P1017";
+const PHONE_RE = /^\+?\d{10,15}$/;
+
+function normalizePhone(input: string | null | undefined) {
+  if (!input) return null;
+  const digits = input.replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 11 && digits.startsWith("8")) {
+    return `+7${digits.slice(1)}`;
+  }
+  if (digits.startsWith("7") && digits.length === 11) {
+    return `+${digits}`;
+  }
+  return digits.startsWith("+") ? digits : `+${digits}`;
+}
+
+function normalizeRecipient(input: string | null | undefined) {
+  const phone = normalizePhone(input);
+  if (!phone) return null;
+  return PHONE_RE.test(phone) ? phone : null;
+}
 
 /** Короткий ретрай, если БД оборвала коннект (Prisma P1017) */
 async function withDbRetry<T>(fn: () => Promise<T>, attempts = 2): Promise<T> {
@@ -57,13 +77,26 @@ export async function startPayment(formData: FormData): Promise<StartPaymentResu
   const order = await withDbRetry(() =>
     db.order.findFirst({
       where: { id: orderId, userId },
-      select: { id: true, description: true, budget: true },
+      select: {
+        id: true,
+        description: true,
+        budget: true,
+        user: { select: { email: true, phone: true, name: true } },
+      },
     })
   ).catch((e) => {
     console.error("[startPayment] db error:", e);
     return null;
   });
   if (!order) return { ok: false, error: "ORDER_NOT_FOUND_OR_DB_ERROR" };
+
+  const paymentRecipientId = normalizeRecipient(env.TINKOFF_PAYMENT_RECIPIENT_ID ?? "");
+  if (!paymentRecipientId) {
+    return { ok: false, error: "PAYMENT_RECIPIENT_NOT_CONFIGURED" };
+  }
+
+  const contactEmail = (order.user?.email ?? "").trim() || undefined;
+  const contactPhone = normalizePhone(order.user?.phone ?? undefined) ?? undefined;
 
   // Сумма: из budget (в рублях) или дефолт 100 ₽
   const amountRub = typeof order.budget === "number" && order.budget > 0 ? order.budget : 100;
@@ -86,6 +119,8 @@ export async function startPayment(formData: FormData): Promise<StartPaymentResu
         orderId: order.id,
         amountKopeks,
         description: (order.description ?? "").slice(0, 140) || "Оплата заказа",
+        contactEmail,
+        contactPhone,
       }),
       cache: "no-store",
     });

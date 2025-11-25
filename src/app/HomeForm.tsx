@@ -3,7 +3,7 @@
 
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
@@ -47,15 +47,9 @@ export default function HomeForm({
   defaultOrganization?: string;
   defaultPersonType?: PersonType;
 }) {
-  const {
-    register,
-    handleSubmit,
-    reset,
-    watch,
-    control,
-    formState: { errors },
-  } = useForm<FormData>({
-    defaultValues: {
+  const STORAGE_KEY = "homeFormDraft";
+  const defaultValues = useMemo<FormData>(
+    () => ({
       email: defaultEmail ?? "",
       phone: defaultPhone ?? "",
       fio: defaultName ?? "",
@@ -64,7 +58,19 @@ export default function HomeForm({
       personType: defaultOrganization ? "company" : defaultPersonType,
       date: "",
       details: "",
-    },
+    }),
+    [defaultEmail, defaultPhone, defaultName, defaultCity, defaultOrganization, defaultPersonType],
+  );
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    control,
+    formState: { errors },
+  } = useForm<FormData>({
+    defaultValues,
   });
 
   const isCompany = watch("personType") === "company";
@@ -80,6 +86,30 @@ export default function HomeForm({
 
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<FormData>;
+      reset({ ...defaultValues, ...parsed });
+    } catch (err) {
+      console.warn("[homeForm] failed to restore draft", err);
+    }
+  }, [reset, defaultValues]);
+
+  useEffect(() => {
+    const subscription = watch((values) => {
+      if (typeof window === "undefined" || !values) return;
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
+      } catch (err) {
+        console.warn("[homeForm] failed to stash draft", err);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [watch]);
 
   // ⚠️ createOrder может сделать redirect("/thanks") и вернуть void.
   type CreateOrderResultOrVoid = CreateOrderResult | void;
@@ -117,6 +147,9 @@ export default function HomeForm({
         date: "",
         details: "",
       });
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
 
       // Если экшен НЕ редиректил сам — отправим на /thanks здесь.
       router.push("/thanks");

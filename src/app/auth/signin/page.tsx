@@ -25,14 +25,15 @@ export default async function SignInPage({
   return (
     <div className="mx-auto mt-16 max-w-lg">
       <Card className="p-6 md:p-8">
-        <h1 className="mb-4 text-2xl font-extrabold text-sky-700">Вход</h1>
+        <h1 className="mb-4 text-2xl font-extrabold text-sky-700">Sign in</h1>
         <p className="mb-6 text-slate-600">
-          Укажи email — пришлём ссылку для входа. Перед отправкой отметь согласия ниже.
+          Enter your email and we will send you a one-time code to access the service.
         </p>
 
-        {/* Больше не нужен никакой CSRF */}
         <SignInForm callbackUrl={target} />
       </Card>
     </div>
   );
 }
+
+

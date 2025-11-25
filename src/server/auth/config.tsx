@@ -2,22 +2,15 @@ import type { NextAuthConfig } from "next-auth";
 import type { Session } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import EmailProvider from "next-auth/providers/email";
-import React from "react";
-
+import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "~/server/db";
 import { env } from "~/server/env";
-import { sendMail } from "~/server/email/send";
-import MagicLinkEmail from "~/emails/MagicLinkEmail";
+import { consumeLoginCode } from "./loginCode";
 
-const BASE_AUTH_URL = env.NEXTAUTH_URL || env.AUTH_URL;
-if (!BASE_AUTH_URL) {
+const baseAuthUrl = env.NEXTAUTH_URL || env.AUTH_URL;
+if (!baseAuthUrl) {
   throw new Error("Configure NEXTAUTH_URL or AUTH_URL (e.g. https://www.yayest.site)");
 }
-const ALLOWED_HOST = new URL(BASE_AUTH_URL).hostname;
-
-// Любая валидная SMTP-строка, чтобы провайдер не ругался (фактически не используется)
-const DUMMY_SMTP_URL = process.env.SMTP_URL ?? "smtp://user:pass@localhost:587";
 
 export const authConfig: NextAuthConfig = {
   adapter: PrismaAdapter(db),
@@ -33,25 +26,30 @@ export const authConfig: NextAuthConfig = {
   },
 
   providers: [
-    EmailProvider({
-      server: DUMMY_SMTP_URL,     // ✅ простая строка — без типов nodemailer
-      from: env.EMAIL_FROM,
-      maxAge: 10 * 60,
-      async sendVerificationRequest({ identifier, url }) {
-        const parsed = new URL(url);
-        if (parsed.hostname !== ALLOWED_HOST) {
-          throw new Error("Disallowed callback host");
-        }
+    CredentialsProvider({
+      id: "code",
+      name: "Email code",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        code: { label: "Code", type: "text" },
+      },
+      async authorize(credentials) {
+        const rawEmail = credentials?.email;
+        const rawCode = credentials?.code;
+        if (typeof rawEmail !== "string" || typeof rawCode !== "string") return null;
+        const email = rawEmail.trim().toLowerCase();
+        const code = rawCode.trim();
+        if (!email || !code) return null;
 
-        if (process.env.NODE_ENV !== "production") {
-          console.log(`[auth] Magic link for ${identifier}: ${parsed.toString()}`);
-        }
+        const outcome = await consumeLoginCode(email, code);
+        if (!outcome.ok) return null;
 
-        await sendMail({
-          to: identifier,
-          subject: "Вход на сайт «Я есть»",
-          react: <MagicLinkEmail url={parsed.toString()} />,
+        const user = await db.user.upsert({
+          where: { email },
+          update: {},
+          create: { email, emailVerified: new Date() },
         });
+        return user;
       },
     }),
   ],

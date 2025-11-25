@@ -114,6 +114,22 @@ model EmailRequest {
   @@index([email, createdAt])
 }
 
+model LoginCode {
+  id         String   @id @default(cuid())
+  email      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int      @default(0)
+  consumed   Boolean  @default(false)
+  consumedAt DateTime?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([expiresAt])
+}
+
 // История
 enum OrderEventType {
   CREATED
