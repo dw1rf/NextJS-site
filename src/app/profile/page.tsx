@@ -7,7 +7,7 @@ import ProfileForm from "./ProfileForm";
 import EmailSection from "./email/EmailSection";
 
 export const metadata = { title: "Личный кабинет" };
-
+//tt
 export default async function ProfilePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/auth/signin?callbackUrl=/profile");
